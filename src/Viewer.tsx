@@ -1,6 +1,6 @@
 import { Folder, FolderOpen, InsertDriveFile } from '@mui/icons-material';
-import { css, Paper } from '@mui/material';
-import { useEffect, useState } from 'react';
+import { css, Menu, MenuItem, Paper, Tooltip } from '@mui/material';
+import { useCallback, useEffect, useState } from 'react';
 
 type SimpleHandle = { kind: 'file'; name: string; size: number } | { kind: 'directory'; name: string; children: SimpleHandle[] };
 
@@ -48,8 +48,16 @@ function getColorBySize(size: number) {
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
-function Viewer({ handle, elevation = 1 }: { handle: FileSystemDirectoryHandle | SimpleHandle; elevation?: number }) {
-  const loadDir = async (handle: FileSystemDirectoryHandle) => {
+function Viewer({
+  handle,
+  elevation = 1,
+  parentPath = '',
+}: {
+  handle: FileSystemDirectoryHandle | SimpleHandle;
+  elevation?: number;
+  parentPath?: string;
+}) {
+  const loadDir = useCallback(async (handle: FileSystemDirectoryHandle) => {
     // 递归整个目录
     const result: SimpleHandle[] = [];
     for await (const entry of handle.values()) {
@@ -60,10 +68,11 @@ function Viewer({ handle, elevation = 1 }: { handle: FileSystemDirectoryHandle |
       }
     }
     return result;
-  };
+  }, []);
 
   const [data, setData] = useState<SimpleHandle | null>(null);
   const [expanded, setExpanded] = useState(true);
+  const isVsCode = navigator.userAgent.includes('Electron/');
 
   useEffect(() => {
     let active = true;
@@ -84,7 +93,31 @@ function Viewer({ handle, elevation = 1 }: { handle: FileSystemDirectoryHandle |
       }
       setData(res);
     }
-  }, [handle]);
+  }, [handle, loadDir]);
+
+  const [contextMenu, setContextMenu] = useState<{
+    mouseX: number;
+    mouseY: number;
+  } | null>(null);
+
+  const handleContextMenu = (event: React.MouseEvent) => {
+    event.preventDefault();
+    setContextMenu(
+      contextMenu === null
+        ? {
+            mouseX: event.clientX + 2,
+            mouseY: event.clientY - 6,
+          }
+        : // repeated contextmenu when it is already open closes it with Chrome 84 on Ubuntu
+          // Other native context menus might behave different.
+          // With this behavior we prevent contextmenu from the backdrop to re-locale existing context menus.
+          null,
+    );
+  };
+
+  const handleClose = () => {
+    setContextMenu(null);
+  };
 
   return (
     data && (
@@ -105,21 +138,28 @@ function Viewer({ handle, elevation = 1 }: { handle: FileSystemDirectoryHandle |
         }}
         onClick={(e) => {
           e.stopPropagation();
+          if (contextMenu) return;
           setExpanded(!expanded);
+        }}
+        onContextMenu={(e) => {
+          e.stopPropagation();
+          handleContextMenu(e);
         }}
       >
         {data.kind === 'directory' ? (
           <>
-            <span
-              css={css`
-                display: flex;
-                align-items: center;
-                gap: 8px;
-              `}
-            >
-              {expanded ? <FolderOpen /> : <Folder />}
-              {data.name}
-            </span>
+            <Tooltip title={`${parentPath}/${data.name}`} placement="top-start" disableInteractive>
+              <span
+                css={css`
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+                `}
+              >
+                {expanded ? <FolderOpen /> : <Folder />}
+                {data.name}
+              </span>
+            </Tooltip>
             {expanded && (
               <div
                 css={css`
@@ -130,22 +170,126 @@ function Viewer({ handle, elevation = 1 }: { handle: FileSystemDirectoryHandle |
                 `}
               >
                 {data.children.map((child) => (
-                  <Viewer handle={child} elevation={elevation + 1} />
+                  <Viewer
+                    key={`${parentPath}/${child.name}`}
+                    handle={child}
+                    elevation={elevation + 1}
+                    parentPath={`${parentPath}/${data.name}`}
+                  />
                 ))}
               </div>
             )}
+            <Menu
+              open={contextMenu !== null}
+              onClose={handleClose}
+              anchorReference="anchorPosition"
+              anchorPosition={contextMenu !== null ? { top: contextMenu.mouseY, left: contextMenu.mouseX } : undefined}
+            >
+              <MenuItem
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleClose();
+                  window.parent.postMessage(
+                    {
+                      isFromApp: true,
+                      command: 'navigate',
+                      data: `${parentPath}/${data.name}`,
+                    },
+                    '*',
+                  );
+                }}
+              >
+                Navigate
+              </MenuItem>
+              <MenuItem
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleClose();
+                  setExpanded(!expanded);
+                }}
+              >
+                {expanded ? 'Fold' : 'Unfold'}
+              </MenuItem>
+              <MenuItem
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleClose();
+                  if (isVsCode) {
+                    window.parent.postMessage(
+                      {
+                        isFromApp: true,
+                        command: 'copy',
+                        data: `${parentPath}/${data.name}`,
+                      },
+                      '*',
+                    );
+                  } else {
+                    navigator.clipboard.writeText(`${parentPath}/${data.name}`);
+                  }
+                }}
+              >
+                Copy path
+              </MenuItem>
+            </Menu>
           </>
         ) : (
-          <span
-            css={css`
-              display: flex;
-              align-items: center;
-              gap: 8px;
-            `}
-          >
-            <InsertDriveFile />
-            {data.name} ({formatFileSize(data.size)})
-          </span>
+          <>
+            <Tooltip title={`${parentPath}/${data.name}`}>
+              <span
+                css={css`
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+                `}
+              >
+                <InsertDriveFile />
+                {data.name} ({formatFileSize(data.size)})
+              </span>
+            </Tooltip>
+            <Menu
+              open={contextMenu !== null}
+              onClose={handleClose}
+              anchorReference="anchorPosition"
+              anchorPosition={contextMenu !== null ? { top: contextMenu.mouseY, left: contextMenu.mouseX } : undefined}
+            >
+              <MenuItem
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleClose();
+                  window.parent.postMessage(
+                    {
+                      isFromApp: true,
+                      command: 'open',
+                      data: `${parentPath}/${data.name}`,
+                    },
+                    '*',
+                  );
+                }}
+              >
+                Open
+              </MenuItem>
+              <MenuItem
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleClose();
+                  if (isVsCode) {
+                    window.parent.postMessage(
+                      {
+                        isFromApp: true,
+                        command: 'copy',
+                        data: `${parentPath}/${data.name}`,
+                      },
+                      '*',
+                    );
+                  } else {
+                    navigator.clipboard.writeText(`${parentPath}/${data.name}`);
+                  }
+                }}
+              >
+                Copy path
+              </MenuItem>
+            </Menu>
+          </>
         )}
       </Paper>
     )

@@ -2,7 +2,7 @@ import * as React from 'react';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { css, Fab } from '@mui/material';
+import { css, Fab, LinearProgress } from '@mui/material';
 import { Folder } from '@mui/icons-material';
 import Viewer from './Viewer';
 
@@ -19,6 +19,7 @@ function App() {
   );
 
   const [handle, setHandle] = React.useState<FileSystemDirectoryHandle | null>(null);
+  const isVsCode = navigator.userAgent.includes('Electron/');
 
   const chooseDir = () => {
     window
@@ -27,6 +28,32 @@ function App() {
       })
       .then((handle) => setHandle(handle));
   };
+
+  React.useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const { command, data } = event.data;
+      if (command === 'load-dir-result') {
+        setHandle(data);
+      }
+    };
+
+    if (isVsCode) {
+      window.parent.postMessage(
+        {
+          isFromApp: true,
+          command: 'load-dir',
+        },
+        '*',
+      );
+      window.addEventListener('message', handleMessage);
+    }
+
+    return () => {
+      if (isVsCode) {
+        window.removeEventListener('message', handleMessage);
+      }
+    };
+  }, [isVsCode]);
 
   return (
     <ThemeProvider theme={theme}>
@@ -38,18 +65,21 @@ function App() {
           font-family: Roboto, system-ui, sans-serif;
         `}
       >
-        <Fab
-          color="primary"
-          css={css`
-            position: fixed;
-            z-index: 1000;
-            right: 3rem;
-            bottom: 3rem;
-          `}
-          onClick={chooseDir}
-        >
-          <Folder />
-        </Fab>
+        {!isVsCode && (
+          <Fab
+            color="primary"
+            css={css`
+              position: fixed;
+              z-index: 1000;
+              right: 3rem;
+              bottom: 3rem;
+            `}
+            onClick={chooseDir}
+          >
+            <Folder />
+          </Fab>
+        )}
+        {isVsCode && !handle && <LinearProgress />}
         {handle && <Viewer handle={handle} />}
       </div>
     </ThemeProvider>
