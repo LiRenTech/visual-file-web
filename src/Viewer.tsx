@@ -2,6 +2,7 @@ import { Folder, FolderOpen, InsertDriveFile } from '@mui/icons-material';
 import { css, Menu, MenuItem, Paper, Tooltip } from '@mui/material';
 import { useCallback, useEffect, useState } from 'react';
 
+const excludes = ['.git', 'node_modules', 'venv', '.venv'];
 type SimpleHandle = { kind: 'file'; name: string; size: number } | { kind: 'directory'; name: string; children: SimpleHandle[] };
 
 function formatFileSize(bytes: number) {
@@ -120,7 +121,8 @@ function Viewer({
   };
 
   return (
-    data && (
+    data &&
+    !excludes.includes(data.name) && (
       <Paper
         elevation={elevation}
         css={css`
